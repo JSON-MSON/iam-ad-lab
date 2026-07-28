@@ -98,6 +98,8 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 - `user_list.txt` — output of `samba-tool user list`, showing the three provisioned users alongside built-in accounts
 - `helpdesk_members.txt` — confirms jsmith's membership in Helpdesk-IT
 - `delegation_ace.txt` — the raw access control entry proving the scoped delegation is in place
+- `users.csv` — input data for scripted bulk provisioning (see addendum below)
+- `provision_users.py` — the CSV-driven provisioning script
 - `screenshots/` — terminal output captures (see below)
 
 ## Screenshots
@@ -105,6 +107,9 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 ![Domain controller status](screenshots/domain-controller-status.png)
 ![Kerberos authentication confirmed](screenshots/kerberos-confirmation.png)
 ![Password-reset delegation verified](screenshots/delegation-proof.png)
+![CSV-driven provisioning](screenshots/csv-provisioning.png)
+![Domain password policy applied](screenshots/password-policy-set.png)
+![Domain password policy verified](screenshots/password-policy-verified.png)
 
 ## Infrastructure note: the Windows 10 domain client
 
@@ -112,6 +117,50 @@ The plan is to domain-join a physical Windows 10 Pro machine (a repurposed 2014 
 
 ## What I'd do differently in production
 
-- Set a proper password policy (minimum length, complexity, lockout threshold) rather than relying on defaults — not configured in this lab build since the focus was the delegation model itself.
 - Use Group Policy (via Samba4's limited GPO support, or a real Windows Server DC in production) to enforce the same least-privilege posture at the client level, not just the directory level.
-- Automate user/group provisioning via a script reading from a CSV rather than hardcoding names, for anything beyond a lab-scale demo.
+
+---
+
+## Addendum: CSV-Driven Provisioning + Domain Password Policy
+
+### What this adds
+
+The original build hardcoded three usernames directly into a shell loop. This upgrade replaces that with data-driven provisioning from a CSV file — directly reusable Python skill from the `log-ioc-parser` project — plus a real, verified domain-wide password policy.
+
+### The provisioning script
+
+```python
+import csv
+import subprocess
+import sys
+
+with open(sys.argv[1]) as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        subprocess.run([
+            "sudo", "samba-tool", "user", "create",
+            row["username"], "TempPass123!",
+            f"--given-name={row['given_name']}"
+        ], check=True)
+        subprocess.run([
+            "sudo", "samba-tool", "user", "move",
+            row["username"], row["ou"]
+        ], check=True)
+        print(f"Provisioned {row['username']} into {row['ou']}")
+```
+`csv.DictReader` reads each row keyed by the CSV's header row, so `row["username"]` works regardless of column order. `subprocess.run([...], check=True)` passes the command as a list of separate arguments rather than one concatenated string — the safer approach, since it avoids the shell needing to parse anything, sidestepping a class of injection risk that string-concatenated commands are vulnerable to. `check=True` makes the script stop immediately on any failed `samba-tool` call rather than silently continuing past a broken provisioning step.
+
+### The domain password policy
+
+```bash
+sudo samba-tool domain passwordsettings set --complexity=on --min-pwd-length=12 --history-length=5
+```
+Verified independently, not just trusted from the `set` command's own success message:
+```bash
+sudo samba-tool domain passwordsettings show
+```
+Confirmed active: complexity on, 12-character minimum, 5-password history.
+
+### Key finding
+
+Both pieces replace something that only worked at lab-demo scale with something that scales to a real environment: provisioning driven by external data instead of names baked into the script, and a directory-wide policy actually enforced by the domain controller rather than left at defaults. The verification step for the password policy matters for the same reason delegation was verified by reading the raw ACE back in the original project — a settings command reporting success and a setting actually being active are two different claims, and only the second one is real evidence.

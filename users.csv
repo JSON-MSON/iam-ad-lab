@@ -1,0 +1,3 @@
+username,given_name,ou
+tjones,Taylor,OU=IT,DC=lab,DC=local
+rwhite,Robin,OU=IT,DC=lab,DC=local
