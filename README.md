@@ -8,7 +8,7 @@ End-to-end Active Directory identity administration — domain provisioning, OU 
 
 - **Domain controller:** Samba4 on Ubuntu Server, running as a VM on the MacBook Air (dual-homed — one adapter bridged to the real LAN, one on the isolated HomeLab network used by the other lab VMs)
 - **Domain:** `LAB.LOCAL`
-- **Domain client (planned):** Windows 10 Pro, bare-metal on a Mac Mini, reachable on the same LAN segment as the domain controller
+- **Domain client:** Windows 10 Pro, bare-metal on a Mac Mini, domain-joined and confirmed via `CsPartOfDomain: True`
 - **Why Samba4 instead of Windows Server:** a standard x86 Windows Server ISO runs painfully slow through emulation on Apple Silicon. Samba4 implements real AD Domain Services natively, at full speed, with the same OU/group/delegation concepts — see the note on the bare-metal Windows Server attempt below for the full story of why this was the right call for this hardware.
 
 ## Process
@@ -89,7 +89,7 @@ Verified by reading the ACE directly back off the object:
 sudo samba-tool dsacl get --objectdn="OU=IT,DC=lab,DC=local" | grep -o "(OA;[^)]*1106)"
 ```
 
-## Why this matters: least privilege, demonstrated at the ACL level
+## Key finding
 
 Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing more. They can't create accounts, can't touch other OUs, can't modify group membership outside what's explicitly granted. This is the actual access-control model real IT support tiers are built on: give the helpdesk exactly enough access to do the job, not domain admin by default. The verification step above doesn't just confirm the delegation *appears* to work through a GUI — it reads the raw access control entry directly off the object, which is the same mechanism Windows AD Domain Services uses internally.
 
@@ -113,7 +113,7 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 
 ## Infrastructure note: the Windows 10 domain client
 
-The plan is to domain-join a physical Windows 10 Pro machine (a repurposed 2014 Mac Mini, running Windows via Boot Camp) to this same domain, to demonstrate the client side of this setup — not just the server console. Getting Windows running on that hardware at all was its own significant undertaking, documented in full in this portfolio's main lab playbook, including an abandoned bare-metal Windows *Server* attempt and the eventual working Windows 10 + Boot Camp Assistant path. That write-up is kept separate from this repo since it's really its own story about unsupported-hardware troubleshooting — but it's the reason this project's domain-controller work happened on Samba4 rather than Windows Server in the first place.
+A physical Windows 10 Pro machine (a repurposed 2014 Mac Mini, running Windows via Boot Camp) is domain-joined to this same domain — confirmed via `Get-ComputerInfo` returning `CsPartOfDomain: True`, `CsDomain: lab.local` — demonstrating the client side of this setup, not just the server console. Getting Windows running on that hardware at all was its own significant undertaking, documented in full in this portfolio's main lab playbook, including an abandoned bare-metal Windows *Server* attempt and the eventual working Windows 10 + Boot Camp Assistant path. That write-up is kept separate from this repo since it's really its own story about unsupported-hardware troubleshooting — but it's the reason this project's domain-controller work happened on Samba4 rather than Windows Server in the first place.
 
 ## What I'd do differently in production
 
