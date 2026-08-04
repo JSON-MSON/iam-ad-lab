@@ -164,3 +164,52 @@ Confirmed active: complexity on, 12-character minimum, 5-password history.
 ### Key finding
 
 Both pieces replace something that only worked at lab-demo scale with something that scales to a real environment: provisioning driven by external data instead of names baked into the script, and a directory-wide policy actually enforced by the domain controller rather than left at defaults. The verification step for the password policy matters for the same reason delegation was verified by reading the raw ACE back in the original project — a settings command reporting success and a setting actually being active are two different claims, and only the second one is real evidence.
+
+---
+
+## Addendum: Layered Defense — AD Account Lockout + SIEM Correlation
+
+### What this adds
+
+A demonstration that this domain's account lockout policy and the Wazuh SIEM built in Project 2 respond to the same attack independently — two separate control layers, neither aware of nor dependent on the other, rather than a single point of detection dressed up as two.
+
+### Prerequisite: domain-joining Ubuntu-target
+
+Testing this required a real SSH domain login against Ubuntu-target, which wasn't previously domain-integrated — only the Windows 10 client (see infrastructure note above) had ever authenticated against this domain before. Domain-joining Ubuntu-target (winbind, NSS, PAM) was completed first, entirely within the isolated HomeLab segment Samba4's second interface already shares — no change to this lab's network isolation boundary.
+
+That process surfaced a real, previously undetected bug: the original provisioning above (Step 6) ran `samba-tool user setexpiry jsmith --days=0`, intending "never expires" — but `--days=0` actually expires the account at the end of the day it's run, not never. `jsmith`'s account had been silently expired since its creation on July 23, undetected because nothing before this point had attempted a real password-based domain login. Fixed with the correct flag:
+
+```bash
+sudo samba-tool user setexpiry jsmith --noexpiry
+```
+
+### Steps
+
+```bash
+# Domain-wide account lockout policy (Samba4)
+sudo samba-tool domain passwordsettings set --account-lockout-threshold=5 --account-lockout-duration=15 --reset-account-lockout-after=15
+
+# Attack (Kali, targeting the now domain-integrated Ubuntu-target)
+hydra -t 4 -l jsmith -P /usr/share/wordlists/rockyou.txt ssh://192.168.81.130
+```
+
+### Layer 1: directory service response
+
+```
+$ sudo samba-tool user show jsmith | grep -i lock
+lockoutTime: 134303420349577910
+```
+
+A non-zero value confirms the domain genuinely locked the account after 5 failed attempts.
+
+### Layer 2: SIEM response
+
+Wazuh's rule 100010 (built in Project 2) fired independently — 24 times across the attack window — reading `auth.log`/`journald` on Ubuntu-target directly, with no dependency on the AD lockout state:
+
+```json
+{"rule":{"id":"100010","description":"Multiple SSH authentication failures from same source - possible brute force (T1110)","mitre":{"id":["T1110"]}},"data":{"srcip":"192.168.81.128","dstuser":"jsmith"}}
+```
+
+### Key finding
+
+Two unrelated control planes — a directory-service lockout policy and a log-based SIEM detection rule — both independently caught the identical attack. Neither depends on or triggers the other; each would still catch this attack even if the other were disabled entirely. That's the actual substance of "defense in depth," not just a label applied after the fact.
