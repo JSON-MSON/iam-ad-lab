@@ -213,3 +213,76 @@ Wazuh's rule 100010 (built in Project 2) fired independently — 24 times across
 ### Key finding
 
 Two unrelated control planes — a directory-service lockout policy and a log-based SIEM detection rule — both independently caught the identical attack. Neither depends on or triggers the other; each would still catch this attack even if the other were disabled entirely. That's the actual substance of "defense in depth," not just a label applied after the fact.
+
+---
+
+## Addendum: Backup & Disaster Recovery Verification
+
+### What this adds
+
+Backup *verification*, not just backup creation — most "I have backups" claims are never actually tested against a real restore. This project simulates a genuine failure and proves recovery with a diff, not just a service that comes back up.
+
+### A recurring infrastructure issue, fixed properly this time
+
+Before backup testing could even start, Samba4 hit the same IPv6-related KDC crash documented earlier in this lab's build (`kdc_add_socket: Failed to bind to <ipv6-address> UDP`) — a third occurrence, despite a prior fix. Root cause this time: the earlier fix only disabled DHCPv6 (`dhcp6: false`), but a separate mechanism — IPv6 Router Advertisements (`accept-ra`) — can independently assign a global IPv6 address via SLAAC regardless of DHCPv6 settings. Disabling both at the netplan level is what actually made the fix durable:
+
+```bash
+sudo tee /etc/netplan/00-installer-config.yaml > /dev/null << 'EOF'
+network:
+  ethernets:
+    enp26s0:
+      accept-ra: false
+      dhcp4: true
+      dhcp6: false
+    enp2s0:
+      accept-ra: false
+      dhcp4: true
+      dhcp6: false
+      match:
+        macaddress: 00:0c:29:6f:e9:30
+      set-name: enp2s0
+  version: 2
+EOF
+sudo netplan apply
+```
+
+### Why `samba-tool domain backup online`/`restore` was abandoned
+
+The built-in Samba backup/restore workflow was attempted first, per the original plan, and hit three separate real issues in sequence: a CLDAP self-discovery failure during backup (resolved by targeting the DC's actual IP instead of `localhost`); an upstream-acknowledged Samba limitation preventing a restore from using the same DC name already present in the backup snapshot (confirmed via Samba's own mailing list — the restore process adds the "new" DC before removing old entries, and can't currently handle a name collision with itself); and finally an unresolved internal `"Samba failed to prime database, error code 22"` failure with no public documentation matching this exact scenario. Rather than keep chasing an increasingly obscure, apparently fragile code path, the approach was switched to a simpler, well-established method: a plain file-level backup of the AD database directory. This is itself a real, defensible engineering call — recognizing when a "supported" tool isn't reliable enough to depend on, and falling back to a more transparent method rather than staying wedded to one command.
+
+### Steps
+
+```bash
+# Backup: stop briefly for a consistent copy, archive, restart
+sudo systemctl stop samba-ad-dc
+sudo tar -czvf ~/samba-private-backup.tar.gz -C /var/lib/samba private
+sudo systemctl start samba-ad-dc
+
+# Record pre-failure state
+sudo samba-tool user list > pre_failure_state.txt
+
+# Simulate failure — rename the live database out of the way, not delete
+sudo systemctl stop samba-ad-dc
+sudo mv /var/lib/samba/private /var/lib/samba/private.simulated-failure
+
+# Restore from the archive
+sudo mkdir /var/lib/samba/private
+sudo tar -xzvf ~/samba-private-backup.tar.gz -C /var/lib/samba
+sudo systemctl start samba-ad-dc
+
+# Verify
+sudo samba-tool user list > post_restore_state.txt
+diff pre_failure_state.txt post_restore_state.txt
+```
+
+### Verification
+
+```
+$ diff <(sudo samba-tool user list | sort) <(sort pre_failure_state.txt)
+```
+
+Empty output — the restored domain's user list is byte-for-byte identical to the pre-failure snapshot: `tjones`, `mchen`, `Guest`, `krbtgt`, `Administrator`, `jsmith`, `rwhite`, `agarcia`.
+
+### Key finding
+
+An empty diff between pre-failure and post-restore state is the actual proof — the specific, verifiable evidence that separates "I took a backup" from "I proved the backup actually works." Equally real: the built-in `samba-tool domain backup` tooling turned out to be the less reliable path here, and recognizing that — backed by genuine research into whether the failures were fixable rather than just working around them blind — mattered more to a working recovery than following the originally-planned command.
