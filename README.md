@@ -110,6 +110,11 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 ![CSV-driven provisioning](screenshots/csv-provisioning.png)
 ![Domain password policy applied](screenshots/password-policy-set.png)
 ![Domain password policy verified](screenshots/password-policy-verified.png)
+![Action1 endpoint inventory](screenshots/action1-endpoint-inventory.png)
+![Action1 software deployment](screenshots/action1-deployment-success.png)
+![Local IAM via PowerShell and lusrmgr.msc](screenshots/local-iam-dual-interface.png)
+![Event ID 4625 - failed logon](screenshots/event-4625-failed-logon.png)
+![Event ID 4726 - account deleted](screenshots/event-4726-account-deleted.png)
 
 ## Infrastructure note: the Windows 10 domain client
 
@@ -286,3 +291,59 @@ Empty output — the restored domain's user list is byte-for-byte identical to t
 ### Key finding
 
 An empty diff between pre-failure and post-restore state is the actual proof — the specific, verifiable evidence that separates "I took a backup" from "I proved the backup actually works." Equally real: the built-in `samba-tool domain backup` tooling turned out to be the less reliable path here, and recognizing that — backed by genuine research into whether the failures were fixable rather than just working around them blind — mattered more to a working recovery than following the originally-planned command.
+
+---
+
+## Addendum: Real RMM, Local Windows IAM, and Security Log Review
+
+### What this adds
+
+Real Action1 RMM enrollment and endpoint management, local Windows identity administration through both the command line and the GUI, and live security log review — extending this project's identity-administration focus onto the domain-joined Windows client itself, not just the directory service side.
+
+### Action1 RMM — real enrollment, inventory, and a scripted deployment
+
+The Windows Mini stays offline by default; this needed the same brief, deliberate connection window already used elsewhere in this lab. The Action1 agent installs silently over PowerShell, same pattern as any other Windows agent install:
+
+```powershell
+Invoke-WebRequest -Uri "<org-specific-agent-url>" -OutFile $env:tmp\action1-agent.msi
+msiexec.exe /i $env:tmp\action1-agent.msi /qn
+```
+
+Enrollment confirmed both locally (`Get-Service` shows the real internal service name, `A1Agent`, running — not "Action1," the display name) and in the console (endpoint listed as `Connected`, with genuine hardware/OS detail).
+
+Two distinct actions were run to demonstrate two distinct RMM competencies — visibility versus deployment:
+
+- **Software inventory** — collected automatically in real time by the agent, no manual scan step exists. Screenshot shows genuine installed-software data (Boot Camp Services, Apple Software Update, Intel drivers) pulled directly off this actual machine.
+- **Scripted deployment** — 7-Zip pushed remotely via the console's Deploy Software action. First attempt failed with a real, specific error: `"The endpoint has not completed the automation within 1 minute(s)."` — not an install failure, a misconfigured automation timeout, confirmed against Action1's own documentation of the "completion deadline" setting. Corrected to a realistic window and re-run; deployment succeeded and 7-Zip appeared in the software inventory with real version/vendor data. Uninstalled afterward via the same console to leave the endpoint in its original state.
+
+### Local Windows IAM — via both interfaces
+
+The same provisioning task, done once through each interface, to genuinely demonstrate both rather than claim both:
+
+```powershell
+New-LocalUser -Name "helpdesktest" -NoPassword
+Add-LocalGroupMember -Group "Users" -Member "helpdesktest"
+```
+
+A second account, `helpdesktest2`, created identically through `lusrmgr.msc` (Local Users and Groups) at the physical console — the GUI tool has no remote/SSH equivalent, so this specific step is the one piece of this lab that genuinely requires physical presence rather than SSH. Both accounts confirmed side-by-side in the same user list.
+
+### Real security events in Event Viewer
+
+A deliberately wrong-password login attempt, followed by locating the resulting entry in Windows Logs → Security:
+
+- **Event ID 4625** ("An account failed to log on") — located and confirmed within seconds of the actual failed attempt.
+- **Event ID 4726** ("A user account was deleted") — bonus evidence, captured when both test accounts were removed afterward as cleanup; two fresh entries, timestamps matching the deletion exactly.
+
+### A genuine networking finding: disconnecting Windows properly
+
+Restoring this machine to its offline-by-default posture afterward turned into real troubleshooting in its own right. The standard `Set-NetIPInterface -Dhcp Disabled` / `New-NetIPAddress` / `Set-DnsClientServerAddress` sequence didn't actually cut off internet access — `Test-NetConnection 8.8.8.8` kept succeeding despite DNS being broken, because the machine's default gateway route survived every attempt to remove it. Root cause: a **persistent route**, stored at the registry level (visible only via the classic `route print`, not `Get-NetRoute`), left over from `route -p` at some earlier point — this survives interface resets and address changes entirely, which explained why the gateway kept reappearing no matter what was tried at the address/route level in between.
+
+```powershell
+route delete 0.0.0.0 mask 0.0.0.0 192.168.1.254
+```
+
+is what actually cleared it — a different command from everything else attempted, since `route delete` (not `Remove-NetRoute`) is what reaches into that persistent store. Confirmed fully offline afterward: `Test-NetConnection 8.8.8.8` returning `PingSucceeded: False`, no route, no source address, while SSH on the local subnet remained fully reachable.
+
+### Key finding
+
+Three separate, genuine pieces of evidence — an enrolled RMM endpoint with a completed deployment, a locally-provisioned account visible through both PowerShell and the GUI, and a real Event ID 4625/4726 pair — demonstrate real endpoint administration and security log review on this domain-joined machine, the same evidentiary standard applied throughout this portfolio. The disconnection troubleshooting is its own legitimate finding on top of that: real endpoint network configuration, including a persistent-route mechanism that doesn't show up in the tooling most people would check first, is exactly the kind of thing that separates someone who's actually configured Windows networking from someone who's only read about it.
