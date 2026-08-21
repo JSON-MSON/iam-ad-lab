@@ -347,3 +347,23 @@ is what actually cleared it — a different command from everything else attempt
 ### Key finding
 
 Three separate, genuine pieces of evidence — an enrolled RMM endpoint with a completed deployment, a locally-provisioned account visible through both PowerShell and the GUI, and a real Event ID 4625/4726 pair — demonstrate real endpoint administration and security log review on this domain-joined machine, the same evidentiary standard applied throughout this portfolio. The disconnection troubleshooting is its own legitimate finding on top of that: real endpoint network configuration, including a persistent-route mechanism that doesn't show up in the tooling most people would check first, is exactly the kind of thing that separates someone who's actually configured Windows networking from someone who's only read about it.
+
+---
+
+## Addendum: A Deliberate Governance Decision — Scoping Windows Out of the SIEM
+
+### What this adds
+
+Not a new technical build — a documented judgment call, included because a real security program requires exactly this kind of decision as often as it requires new tooling: recognizing when the more complete-looking option is the wrong one, and being able to explain why in writing.
+
+### The decision
+
+Extending the Wazuh SIEM's monitoring to this project's domain-joined Windows client — centralizing its Security Event Log the same way Ubuntu-target's authentication log already is — was considered directly, as a natural next step once both machines were part of the same domain. It doesn't happen, and won't, without a deliberate infrastructure change first: the Wazuh manager runs on Ubuntu-target, which sits on the isolated network segment used for attack simulation; the Windows client sits on the real home network. Connecting the two would mean opening a route between an intentionally hostile, attacker-controlled segment and every other device on the actual production network. That trade was rejected outright — a real gap in log centralization was accepted rather than exchanged for a materially worse one.
+
+### Why this counts as governance, not just infrastructure
+
+Everywhere else in this portfolio, the work is technical: a rule is written, a policy is configured, a system is provisioned. This is different — no tool was built, no rule was written. A risk was identified, weighed against the benefit it would have unlocked, and the lab's own segmentation boundary was chosen over a feature. That's a small-scale but genuine version of what governance actually is: not every capability gap is worth closing at any cost, and stating that tradeoff plainly, in writing, is itself the deliverable — not a placeholder for one.
+
+### What this doesn't claim
+
+This isn't a claim to have built an organizational risk-governance program — a single-operator home lab doesn't have one, and pretending otherwise would undercut the honesty this whole portfolio is built on. It's one real decision, documented plainly, because it's the one artifact this lab's actual scale produced.
