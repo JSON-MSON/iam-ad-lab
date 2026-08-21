@@ -35,6 +35,8 @@ sudo systemctl unmask samba-ad-dc
 sudo systemctl enable --now samba-ad-dc
 ```
 
+![Domain controller status](screenshots/domain-controller-status.png)
+
 ### 3. Point the machine's own DNS resolution at itself
 
 Samba's internal DNS server needs to actually be queried for domain lookups to resolve. `systemd-resolved` holds port 53 by default and needs to be disabled first:
@@ -56,6 +58,8 @@ klist
 ```
 
 Confirmed: real SRV record for the LDAP service, valid Kerberos ticket issued for the Administrator principal.
+
+![Kerberos authentication confirmed](screenshots/kerberos-confirmation.png)
 
 ### 5. Build the OU structure and provision users
 
@@ -89,6 +93,8 @@ Verified by reading the ACE directly back off the object:
 sudo samba-tool dsacl get --objectdn="OU=IT,DC=lab,DC=local" | grep -o "(OA;[^)]*1106)"
 ```
 
+![Password-reset delegation verified](screenshots/delegation-proof.png)
+
 ## Key finding
 
 Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing more. They can't create accounts, can't touch other OUs, can't modify group membership outside what's explicitly granted. This is the actual access-control model real IT support tiers are built on: give the helpdesk exactly enough access to do the job, not domain admin by default. The verification step above doesn't just confirm the delegation *appears* to work through a GUI — it reads the raw access control entry directly off the object, which is the same mechanism Windows AD Domain Services uses internally.
@@ -100,21 +106,7 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 - `delegation_ace.txt` — the raw access control entry proving the scoped delegation is in place
 - `users.csv` — input data for scripted bulk provisioning (see addendum below)
 - `provision_users.py` — the CSV-driven provisioning script
-- `screenshots/` — terminal output captures (see below)
-
-## Screenshots
-
-![Domain controller status](screenshots/domain-controller-status.png)
-![Kerberos authentication confirmed](screenshots/kerberos-confirmation.png)
-![Password-reset delegation verified](screenshots/delegation-proof.png)
-![CSV-driven provisioning](screenshots/csv-provisioning.png)
-![Domain password policy applied](screenshots/password-policy-set.png)
-![Domain password policy verified](screenshots/password-policy-verified.png)
-![Action1 endpoint inventory](screenshots/action1-endpoint-inventory.png)
-![Action1 software deployment](screenshots/action1-deployment-success.png)
-![Local IAM via PowerShell and lusrmgr.msc](screenshots/local-iam-dual-interface.png)
-![Event ID 4625 - failed logon](screenshots/event-4625-failed-logon.png)
-![Event ID 4726 - account deleted](screenshots/event-4726-account-deleted.png)
+- `screenshots/` — terminal and console captures, placed inline throughout this README next to the step each one documents, rather than grouped separately
 
 ## Infrastructure note: the Windows 10 domain client
 
@@ -155,16 +147,23 @@ with open(sys.argv[1]) as f:
 ```
 `csv.DictReader` reads each row keyed by the CSV's header row, so `row["username"]` works regardless of column order. `subprocess.run([...], check=True)` passes the command as a list of separate arguments rather than one concatenated string — the safer approach, since it avoids the shell needing to parse anything, sidestepping a class of injection risk that string-concatenated commands are vulnerable to. `check=True` makes the script stop immediately on any failed `samba-tool` call rather than silently continuing past a broken provisioning step.
 
+![CSV-driven provisioning](screenshots/csv-provisioning.png)
+
 ### The domain password policy
 
 ```bash
 sudo samba-tool domain passwordsettings set --complexity=on --min-pwd-length=12 --history-length=5
 ```
+
+![Domain password policy applied](screenshots/password-policy-set.png)
+
 Verified independently, not just trusted from the `set` command's own success message:
 ```bash
 sudo samba-tool domain passwordsettings show
 ```
 Confirmed active: complexity on, 12-character minimum, 5-password history.
+
+![Domain password policy verified](screenshots/password-policy-verified.png)
 
 ### Key finding
 
@@ -314,7 +313,12 @@ Enrollment confirmed both locally (`Get-Service` shows the real internal service
 Two distinct actions were run to demonstrate two distinct RMM competencies — visibility versus deployment:
 
 - **Software inventory** — collected automatically in real time by the agent, no manual scan step exists. Screenshot shows genuine installed-software data (Boot Camp Services, Apple Software Update, Intel drivers) pulled directly off this actual machine.
+
+![Action1 endpoint inventory](screenshots/action1-endpoint-inventory.png)
+
 - **Scripted deployment** — 7-Zip pushed remotely via the console's Deploy Software action. First attempt failed with a real, specific error: `"The endpoint has not completed the automation within 1 minute(s)."` — not an install failure, a misconfigured automation timeout, confirmed against Action1's own documentation of the "completion deadline" setting. Corrected to a realistic window and re-run; deployment succeeded and 7-Zip appeared in the software inventory with real version/vendor data. Uninstalled afterward via the same console to leave the endpoint in its original state.
+
+![Action1 software deployment](screenshots/action1-deployment-success.png)
 
 ### Local Windows IAM — via both interfaces
 
@@ -327,12 +331,19 @@ Add-LocalGroupMember -Group "Users" -Member "helpdesktest"
 
 A second account, `helpdesktest2`, created identically through `lusrmgr.msc` (Local Users and Groups) at the physical console — the GUI tool has no remote/SSH equivalent, so this specific step is the one piece of this lab that genuinely requires physical presence rather than SSH. Both accounts confirmed side-by-side in the same user list.
 
+![Local IAM via PowerShell and lusrmgr.msc](screenshots/local-iam-dual-interface.png)
+
 ### Real security events in Event Viewer
 
 A deliberately wrong-password login attempt, followed by locating the resulting entry in Windows Logs → Security:
 
 - **Event ID 4625** ("An account failed to log on") — located and confirmed within seconds of the actual failed attempt.
+
+![Event ID 4625 - failed logon](screenshots/event-4625-failed-logon.png)
+
 - **Event ID 4726** ("A user account was deleted") — bonus evidence, captured when both test accounts were removed afterward as cleanup; two fresh entries, timestamps matching the deletion exactly.
+
+![Event ID 4726 - account deleted](screenshots/event-4726-account-deleted.png)
 
 ### A genuine networking finding: disconnecting Windows properly
 
