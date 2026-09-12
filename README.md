@@ -135,7 +135,7 @@ sudo samba-tool dsacl get --objectdn="OU=IT,DC=lab,DC=local" | grep -o "(OA;[^)]
 
 ### What this adds
 
-The original build hardcoded three usernames directly into a shell loop. This upgrade replaces that with data-driven provisioning from a CSV file — directly reusable Python skill from the `log-ioc-parser` project — plus a real, verified domain-wide password policy.
+The original build hardcoded three usernames directly into a shell loop. This upgrade replaces that with data-driven provisioning from a CSV file — directly reusable Python skill from the [`log-ioc-parser`](https://github.com/JSON-MSON/log-ioc-parser) project — plus a real, verified domain-wide password policy.
 
 ### The provisioning script
 
