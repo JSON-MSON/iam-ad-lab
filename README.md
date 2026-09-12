@@ -9,7 +9,6 @@ End-to-end Active Directory identity administration — domain provisioning, OU 
 - **Domain controller:** Samba4 on Ubuntu Server, running as a VM on the MacBook Air (dual-homed — one adapter bridged to the real LAN, one on the isolated HomeLab network used by the other lab VMs)
 - **Domain:** `LAB.LOCAL`
 - **Domain client:** Windows 10 Pro, bare-metal on a Mac Mini, domain-joined and confirmed via `CsPartOfDomain: True`
-- **Why Samba4 instead of Windows Server:** a standard x86 Windows Server ISO runs painfully slow through emulation on Apple Silicon. Samba4 implements real AD Domain Services natively, at full speed, with the same OU/group/delegation concepts — see the note on the bare-metal Windows Server attempt below for the full story of why this was the right call for this hardware.
 
 ## Process
 
@@ -67,10 +66,12 @@ Confirmed: real SRV record for the LDAP service, valid Kerberos ticket issued fo
 sudo samba-tool ou create "OU=IT,DC=lab,DC=local"
 
 for u in jsmith agarcia mchen; do
-  sudo samba-tool user create "$u" "TempPass123!" --given-name="$u"
+  sudo samba-tool user create "$u" "<temp-password>" --given-name="$u"
   sudo samba-tool user move "$u" "OU=IT,DC=lab,DC=local"
 done
 ```
+
+The temporary password is redacted here and in the provisioning script. It was a throwaway value on an isolated lab VM, but publishing a working credential pattern is a habit worth not forming.
 
 ### 6. Create a helpdesk group and delegate password-reset rights — scoped, not domain-wide
 
@@ -110,7 +111,7 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 
 ## Infrastructure note: the Windows 10 domain client
 
-A physical Windows 10 Pro machine (a repurposed 2014 Mac Mini, running Windows via Boot Camp) is domain-joined to this same domain — confirmed via `Get-ComputerInfo` returning `CsPartOfDomain: True`, `CsDomain: lab.local` — demonstrating the client side of this setup, not just the server console. Getting Windows running on that hardware at all was its own significant undertaking, documented in full in this portfolio's main lab playbook, including an abandoned bare-metal Windows *Server* attempt and the eventual working Windows 10 + Boot Camp Assistant path. That write-up is kept separate from this repo since it's really its own story about unsupported-hardware troubleshooting — but it's the reason this project's domain-controller work happened on Samba4 rather than Windows Server in the first place.
+A physical Windows 10 Pro machine (a repurposed 2014 Mac Mini, running Windows via Boot Camp) is domain-joined to this same domain — confirmed via `Get-ComputerInfo` returning `CsPartOfDomain: True`, `CsDomain: lab.local` — demonstrating the client side of this setup, not just the server console. Getting Windows running on that hardware at all was its own undertaking, including an abandoned bare-metal Windows *Server* attempt before the working Windows 10 + Boot Camp Assistant path — a hardware-support story rather than a security one, so it is out of scope for this repo.
 
 ## What I'd do differently in production
 
@@ -128,15 +129,18 @@ The original build hardcoded three usernames directly into a shell loop. This up
 
 ```python
 import csv
+import os
 import subprocess
 import sys
+
+TEMP_PASSWORD = os.environ["TEMP_PASSWORD"]
 
 with open(sys.argv[1]) as f:
     reader = csv.DictReader(f)
     for row in reader:
         subprocess.run([
             "sudo", "samba-tool", "user", "create",
-            row["username"], "TempPass123!",
+            row["username"], TEMP_PASSWORD,
             f"--given-name={row['given_name']}"
         ], check=True)
         subprocess.run([
@@ -145,7 +149,7 @@ with open(sys.argv[1]) as f:
         ], check=True)
         print(f"Provisioned {row['username']} into {row['ou']}")
 ```
-`csv.DictReader` reads each row keyed by the CSV's header row, so `row["username"]` works regardless of column order. `subprocess.run([...], check=True)` passes the command as a list of separate arguments rather than one concatenated string — the safer approach, since it avoids the shell needing to parse anything, sidestepping a class of injection risk that string-concatenated commands are vulnerable to. `check=True` makes the script stop immediately on any failed `samba-tool` call rather than silently continuing past a broken provisioning step.
+The temporary password is read from an environment variable rather than hardcoded, so the script can be published without a working credential in it. `csv.DictReader` reads each row keyed by the CSV's header row, so `row["username"]` works regardless of column order. `subprocess.run([...], check=True)` passes the command as a list of separate arguments rather than one concatenated string — the safer approach, since it avoids the shell needing to parse anything, sidestepping a class of injection risk that string-concatenated commands are vulnerable to. `check=True` makes the script stop immediately on any failed `samba-tool` call rather than silently continuing past a broken provisioning step.
 
 ![CSV-driven provisioning](screenshots/csv-provisioning.png)
 
@@ -175,7 +179,7 @@ Both pieces replace something that only worked at lab-demo scale with something 
 
 ### What this adds
 
-A demonstration that this domain's account lockout policy and the Wazuh SIEM built in Project 2 respond to the same attack independently — two separate control layers, neither aware of nor dependent on the other, rather than a single point of detection dressed up as two.
+A demonstration that this domain's account lockout policy and the Wazuh SIEM built in this portfolio's SIEM project respond to the same attack independently — two separate control layers, neither aware of nor dependent on the other, rather than a single point of detection dressed up as two.
 
 ### Prerequisite: domain-joining Ubuntu-target
 
@@ -204,11 +208,11 @@ $ sudo samba-tool user show jsmith | grep -i lock
 lockoutTime: 134303420349577910
 ```
 
-A non-zero value confirms the domain genuinely locked the account after 5 failed attempts.
+A non-zero value confirms the domain genuinely locked the account after 5 failed attempts. The value is an AD timestamp — 100-nanosecond intervals since January 1, 1601 — which decodes to **2026-08-04 18:33:54.957 UTC**. That is 0.6 seconds before the first SIEM alert below, giving the two layers an independently verifiable point of correlation rather than two separate assertions that they both fired.
 
 ### Layer 2: SIEM response
 
-Wazuh's rule 100010 (built in Project 2) fired independently — 24 times across the attack window — reading `auth.log`/`journald` on Ubuntu-target directly, with no dependency on the AD lockout state:
+Wazuh's rule 100010 (built in this portfolio's SIEM project) fired independently — 23 times against the attacking host, across a 38-second window — reading `auth.log`/`journald` on Ubuntu-target directly, with no dependency on the AD lockout state. (A twenty-fourth alert for the same rule that day came from the hypervisor host address 26 minutes before the attack began, and is excluded from this count.)
 
 ```json
 {"rule":{"id":"100010","description":"Multiple SSH authentication failures from same source - possible brute force (T1110)","mitre":{"id":["T1110"]}},"data":{"srcip":"192.168.81.128","dstuser":"jsmith"}}
@@ -252,18 +256,18 @@ sudo netplan apply
 
 ### Why `samba-tool domain backup online`/`restore` was abandoned
 
-The built-in Samba backup/restore workflow was attempted first, per the original plan, and hit three separate real issues in sequence: a CLDAP self-discovery failure during backup (resolved by targeting the DC's actual IP instead of `localhost`); an upstream-acknowledged Samba limitation preventing a restore from using the same DC name already present in the backup snapshot (confirmed via Samba's own mailing list — the restore process adds the "new" DC before removing old entries, and can't currently handle a name collision with itself); and finally an unresolved internal `"Samba failed to prime database, error code 22"` failure with no public documentation matching this exact scenario. Rather than keep chasing an increasingly obscure, apparently fragile code path, the approach was switched to a simpler, well-established method: a plain file-level backup of the AD database directory. This is itself a real, defensible engineering call — recognizing when a "supported" tool isn't reliable enough to depend on, and falling back to a more transparent method rather than staying wedded to one command.
+The built-in Samba backup/restore workflow was attempted first, per the original plan, and hit three separate real issues in sequence: a CLDAP self-discovery failure during backup (resolved by targeting the DC's actual IP instead of `localhost`); an upstream-acknowledged Samba limitation preventing a restore from using the same DC name already present in the backup snapshot ([samba mailing list, February 2019](https://lists.samba.org/archive/samba/2019-February/221019.html): the restore adds the new DC to the database before removing the old entries, so a DC with the same name cannot be added because it already exists); and finally an unresolved internal `"Samba failed to prime database, error code 22"` failure with no public documentation matching this exact scenario. Rather than keep chasing an increasingly obscure, apparently fragile code path, the approach was switched to a simpler, well-established method: a plain file-level backup of the AD database directory. This is itself a real, defensible engineering call — recognizing when a "supported" tool isn't reliable enough to depend on, and falling back to a more transparent method rather than staying wedded to one command.
 
 ### Steps
 
 ```bash
+# Record pre-failure state
+sudo samba-tool user list > pre_failure_state.txt
+
 # Backup: stop briefly for a consistent copy, archive, restart
 sudo systemctl stop samba-ad-dc
 sudo tar -czvf ~/samba-private-backup.tar.gz -C /var/lib/samba private
 sudo systemctl start samba-ad-dc
-
-# Record pre-failure state
-sudo samba-tool user list > pre_failure_state.txt
 
 # Simulate failure — rename the live database out of the way, not delete
 sudo systemctl stop samba-ad-dc
@@ -281,11 +285,11 @@ diff pre_failure_state.txt post_restore_state.txt
 
 ### Verification
 
-```
-$ diff <(sudo samba-tool user list | sort) <(sort pre_failure_state.txt)
+```bash
+diff <(sort pre_failure_state.txt) <(sudo samba-tool user list | sort)
 ```
 
-Empty output — the restored domain's user list is byte-for-byte identical to the pre-failure snapshot: `tjones`, `mchen`, `Guest`, `krbtgt`, `Administrator`, `jsmith`, `rwhite`, `agarcia`.
+Empty output. The restored domain's user list is identical to the pre-failure snapshot: `tjones`, `mchen`, `Guest`, `krbtgt`, `Administrator`, `jsmith`, `rwhite`, `agarcia`. The snapshot file is committed to this repo, so the comparison can be re-run against the live domain at any time rather than resting on a check captured once.
 
 ### Key finding
 
@@ -329,7 +333,7 @@ New-LocalUser -Name "helpdesktest" -NoPassword
 Add-LocalGroupMember -Group "Users" -Member "helpdesktest"
 ```
 
-A second account, `helpdesktest2`, created identically through `lusrmgr.msc` (Local Users and Groups) at the physical console — the GUI tool has no remote/SSH equivalent, so this specific step is the one piece of this lab that genuinely requires physical presence rather than SSH. Both accounts confirmed side-by-side in the same user list.
+A second account, `helpdesktest2`, created identically through `lusrmgr.msc` (Local Users and Groups) at the physical console — the graphical console has no SSH equivalent, and this lab has no second Windows machine from which to use Computer Management's [remote connection](https://learn.microsoft.com/en-us/archive/technet-wiki/4558.computer-management), so this step was done at the machine itself. Both accounts confirmed side-by-side in the same user list.
 
 ![Local IAM via PowerShell and lusrmgr.msc](screenshots/local-iam-dual-interface.png)
 
@@ -347,13 +351,13 @@ A deliberately wrong-password login attempt, followed by locating the resulting 
 
 ### A genuine networking finding: disconnecting Windows properly
 
-Restoring this machine to its offline-by-default posture afterward turned into real troubleshooting in its own right. The standard `Set-NetIPInterface -Dhcp Disabled` / `New-NetIPAddress` / `Set-DnsClientServerAddress` sequence didn't actually cut off internet access — `Test-NetConnection 8.8.8.8` kept succeeding despite DNS being broken, because the machine's default gateway route survived every attempt to remove it. Root cause: a **persistent route**, stored at the registry level (visible only via the classic `route print`, not `Get-NetRoute`), left over from `route -p` at some earlier point — this survives interface resets and address changes entirely, which explained why the gateway kept reappearing no matter what was tried at the address/route level in between.
+Restoring this machine to its offline-by-default posture afterward turned into real troubleshooting in its own right. The standard `Set-NetIPInterface -Dhcp Disabled` / `New-NetIPAddress` / `Set-DnsClientServerAddress` sequence didn't actually cut off internet access — `Test-NetConnection 8.8.8.8` kept succeeding despite DNS being broken, because the machine's default gateway route survived every attempt to remove it. Root cause: a **persistent route**, stored in the registry's persistent-route store and left over from `route -p` at some earlier point. It did not appear in a default `Get-NetRoute` listing, only in the classic `route print` output under Persistent Routes — which explained why the gateway kept reappearing no matter what was tried at the address level in between.
 
 ```powershell
 route delete 0.0.0.0 mask 0.0.0.0 192.168.1.254
 ```
 
-is what actually cleared it — a different command from everything else attempted, since `route delete` (not `Remove-NetRoute`) is what reaches into that persistent store. Confirmed fully offline afterward: `Test-NetConnection 8.8.8.8` returning `PingSucceeded: False`, no route, no source address, while SSH on the local subnet remained fully reachable.
+is what actually cleared it. The persistent store is reachable from PowerShell too — [`Remove-NetRoute`](https://learn.microsoft.com/en-us/powershell/module/nettcpip/remove-netroute) accepts a `-PolicyStore` parameter — so the failure here was querying the wrong store by default, not a missing capability. Confirmed fully offline afterward: `Test-NetConnection 8.8.8.8` returning `PingSucceeded: False`, no route, no source address, while SSH on the local subnet remained fully reachable.
 
 ### Key finding
 
