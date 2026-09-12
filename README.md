@@ -8,11 +8,41 @@ End-to-end Active Directory identity administration — domain provisioning, OU 
 
 - **Domain controller:** Samba4 on Ubuntu Server, running as a VM on the MacBook Air (dual-homed — one adapter bridged to the real LAN, one on the isolated HomeLab network used by the other lab VMs)
 - **Domain:** `LAB.LOCAL`
-- **Domain client:** Windows 10 Pro, bare-metal on a Mac Mini, domain-joined and confirmed via `CsPartOfDomain: True`
+- **Domain client:** Windows 10 Pro, bare-metal on a Mac Mini, domain-joined — confirmed via `Get-ComputerInfo` returning `CsPartOfDomain: True` and `CsDomain: lab.local`
+
+## Key findings
+
+Five things this project established, each backed by evidence in the sections below.
+
+**Delegation is scoped, and that was verified at the directory level.** Helpdesk-IT's members can reset passwords for users inside the IT OU and nothing more — no account creation, no other OUs, no group membership changes. That is the access-control model real IT support tiers are built on. The verification reads the raw access control entry directly off the object rather than confirming through a GUI, which is the same mechanism AD Domain Services uses internally.
+
+**A command reporting success and a setting being active are two different claims.** This applies to the delegation ACE, to the domain password policy, and to the account lockout — each was read back from the directory after being set. Only the read-back is evidence.
+
+**Two unrelated control planes caught the same attack independently.** A directory-service lockout policy and a log-based SIEM rule both fired on one live brute-force run. Neither depends on the other; either would still catch it alone. That is the substance of defense in depth rather than the label.
+
+**A backup is not proven until a restore is compared against a known prior state.** The restored domain's user list matches a snapshot taken before the simulated failure, and the snapshot is committed so the comparison can be re-run at any time. Equally real: the built-in `samba-tool domain backup` tooling proved the less reliable path here, and establishing that through research rather than working around it blind mattered more than following the original plan.
+
+**Not every capability gap is worth closing.** Extending SIEM monitoring to the Windows client was considered and rejected, because it would have required routing between an attack-simulation segment and the real network. That decision is documented immediately below.
+
+## Governance: a decision not to extend SIEM monitoring to the Windows client
+
+### The decision
+
+Extending the Wazuh SIEM's monitoring to this project's domain-joined Windows client — centralizing its Security Event Log the same way Ubuntu-target's authentication log already is — was considered directly, as a natural next step once both machines were part of the same domain. It doesn't happen, and won't, without a deliberate infrastructure change first: the Wazuh manager runs on Ubuntu-target, which sits on the isolated network segment used for attack simulation; the Windows client sits on the real home network. Connecting the two would mean opening a route between an intentionally hostile, attacker-controlled segment and every other device on the actual production network. That trade was rejected outright — a real gap in log centralization was accepted rather than exchanged for a materially worse one.
+
+### Why this counts as governance, not just infrastructure
+
+Everywhere else in this portfolio, the work is technical: a rule is written, a policy is configured, a system is provisioned. This is different — no tool was built, no rule was written. A risk was identified, weighed against the benefit it would have unlocked, and the lab's own segmentation boundary was chosen over a feature. That's a small-scale but genuine version of what governance actually is: not every capability gap is worth closing at any cost, and stating that tradeoff plainly, in writing, is itself the deliverable — not a placeholder for one.
+
+### What this doesn't claim
+
+This isn't a claim to have built an organizational risk-governance program — a single-operator home lab doesn't have one, and pretending otherwise would undercut the honesty this whole portfolio is built on. It's one real decision, documented plainly, because it's the one artifact this lab's actual scale produced.
 
 ## Process
 
-### 1. Provision the domain
+Each step below is what was actually run, in order. Two of them turned up behaviour worth knowing about; the rest is straightforward.
+
+### 1. Provision the domain and bring up the DC role
 
 ```bash
 sudo apt install -y samba krb5-config winbind smbclient samba-ad-provision samba-dsdb-modules samba-vfs-modules acl krb5-user
@@ -22,9 +52,7 @@ sudo samba-tool domain provision --use-rfc2307 --interactive
 
 Provisioning creates the AD database, Kerberos KDC configuration, and DNS zone from scratch. Realm `LAB.LOCAL`, domain `LAB`, role `dc`, DNS backend `SAMBA_INTERNAL`.
 
-### 2. Switch from file-server mode to full domain controller mode
-
-Ubuntu's base `samba` package only provides the file-server role (smbd/nmbd/winbind). The AD DC role is a separate service:
+**Ubuntu's base `samba` package does not include the domain controller role.** It provides the file-server role only (smbd/nmbd/winbind). The AD DC service is a separate package, and it ships masked:
 
 ```bash
 sudo apt install -y samba-ad-dc
@@ -34,11 +62,7 @@ sudo systemctl unmask samba-ad-dc
 sudo systemctl enable --now samba-ad-dc
 ```
 
-![Domain controller status](screenshots/domain-controller-status.png)
-
-### 3. Point the machine's own DNS resolution at itself
-
-Samba's internal DNS server needs to actually be queried for domain lookups to resolve. `systemd-resolved` holds port 53 by default and needs to be disabled first:
+**`systemd-resolved` holds port 53**, so Samba's internal DNS cannot answer domain lookups until it is disabled and the machine resolves against itself:
 
 ```bash
 sudo systemctl disable --now systemd-resolved
@@ -48,19 +72,15 @@ echo "search lab.local" | sudo tee -a /etc/resolv.conf
 sudo systemctl restart samba-ad-dc
 ```
 
-### 4. Verify the domain is genuinely functional
+![Domain controller status](screenshots/domain-controller-status.png)
 
-```bash
-host -t SRV _ldap._tcp.lab.local
-kinit administrator@LAB.LOCAL
-klist
-```
+### 2. Confirm the domain is functional
 
-Confirmed: real SRV record for the LDAP service, valid Kerberos ticket issued for the Administrator principal.
+`host -t SRV _ldap._tcp.lab.local` returns a real SRV record for the LDAP service, and `kinit administrator@LAB.LOCAL` followed by `klist` issues and lists a valid Kerberos ticket.
 
 ![Kerberos authentication confirmed](screenshots/kerberos-confirmation.png)
 
-### 5. Build the OU structure and provision users
+### 3. Build the OU structure and provision users
 
 ```bash
 sudo samba-tool ou create "OU=IT,DC=lab,DC=local"
@@ -73,7 +93,7 @@ done
 
 The temporary password is redacted here and in the provisioning script. It was a throwaway value on an isolated lab VM, but publishing a working credential pattern is a habit worth not forming.
 
-### 6. Create a helpdesk group and delegate password-reset rights — scoped, not domain-wide
+### 4. Delegate password-reset rights — scoped, not domain-wide
 
 ```bash
 sudo samba-tool group add Helpdesk-IT
@@ -81,7 +101,7 @@ sudo samba-tool group addmembers Helpdesk-IT jsmith
 sudo samba-tool user setexpiry jsmith --days=0
 ```
 
-Delegation itself is applied as a direct access control entry on the OU, using AD's standard "Reset Password" extended-right GUID, scoped to the Helpdesk-IT group's SID:
+Delegation is applied as a direct access control entry on the OU, using AD's standard "Reset Password" extended-right GUID, scoped to the Helpdesk-IT group's SID:
 
 ```bash
 sudo samba-tool dsacl set --objectdn="OU=IT,DC=lab,DC=local" \
@@ -96,10 +116,6 @@ sudo samba-tool dsacl get --objectdn="OU=IT,DC=lab,DC=local" | grep -o "(OA;[^)]
 
 ![Password-reset delegation verified](screenshots/delegation-proof.png)
 
-## Key finding
-
-Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing more. They can't create accounts, can't touch other OUs, can't modify group membership outside what's explicitly granted. This is the actual access-control model real IT support tiers are built on: give the helpdesk exactly enough access to do the job, not domain admin by default. The verification step above doesn't just confirm the delegation *appears* to work through a GUI — it reads the raw access control entry directly off the object, which is the same mechanism Windows AD Domain Services uses internally.
-
 ## Files in this repo
 
 - `user_list.txt` — output of `samba-tool user list`, showing the three provisioned users alongside built-in accounts
@@ -108,10 +124,6 @@ Helpdesk-IT's members can reset passwords for users inside the IT OU — nothing
 - `users.csv` — input data for scripted bulk provisioning (see addendum below)
 - `provision_users.py` — the CSV-driven provisioning script
 - `screenshots/` — terminal and console captures, placed inline throughout this README next to the step each one documents, rather than grouped separately
-
-## Infrastructure note: the Windows 10 domain client
-
-A physical Windows 10 Pro machine (a repurposed 2014 Mac Mini, running Windows via Boot Camp) is domain-joined to this same domain — confirmed via `Get-ComputerInfo` returning `CsPartOfDomain: True`, `CsDomain: lab.local` — demonstrating the client side of this setup, not just the server console. Getting Windows running on that hardware at all was its own undertaking, including an abandoned bare-metal Windows *Server* attempt before the working Windows 10 + Boot Camp Assistant path — a hardware-support story rather than a security one, so it is out of scope for this repo.
 
 ## What I'd do differently in production
 
@@ -169,12 +181,6 @@ Confirmed active: complexity on, 12-character minimum, 5-password history.
 
 ![Domain password policy verified](screenshots/password-policy-verified.png)
 
-### Key finding
-
-Both pieces replace something that only worked at lab-demo scale with something that scales to a real environment: provisioning driven by external data instead of names baked into the script, and a directory-wide policy actually enforced by the domain controller rather than left at defaults. The verification step for the password policy matters for the same reason delegation was verified by reading the raw ACE back in the original project — a settings command reporting success and a setting actually being active are two different claims, and only the second one is real evidence.
-
----
-
 ## Addendum: Layered Defense — AD Account Lockout + SIEM Correlation
 
 ### What this adds
@@ -217,12 +223,6 @@ Wazuh's rule 100010 (built in this portfolio's SIEM project) fired independently
 ```json
 {"rule":{"id":"100010","description":"Multiple SSH authentication failures from same source - possible brute force (T1110)","mitre":{"id":["T1110"]}},"data":{"srcip":"192.168.81.128","dstuser":"jsmith"}}
 ```
-
-### Key finding
-
-Two unrelated control planes — a directory-service lockout policy and a log-based SIEM detection rule — both independently caught the identical attack. Neither depends on or triggers the other; each would still catch this attack even if the other were disabled entirely. That's the actual substance of "defense in depth," not just a label applied after the fact.
-
----
 
 ## Addendum: Backup & Disaster Recovery Verification
 
@@ -291,12 +291,6 @@ diff <(sort pre_failure_state.txt) <(sudo samba-tool user list | sort)
 
 Empty output. The restored domain's user list is identical to the pre-failure snapshot: `tjones`, `mchen`, `Guest`, `krbtgt`, `Administrator`, `jsmith`, `rwhite`, `agarcia`. The snapshot file is committed to this repo, so the comparison can be re-run against the live domain at any time rather than resting on a check captured once.
 
-### Key finding
-
-An empty diff between pre-failure and post-restore state is the actual proof — the specific, verifiable evidence that separates "I took a backup" from "I proved the backup actually works." Equally real: the built-in `samba-tool domain backup` tooling turned out to be the less reliable path here, and recognizing that — backed by genuine research into whether the failures were fixable rather than just working around them blind — mattered more to a working recovery than following the originally-planned command.
-
----
-
 ## Addendum: Real RMM, Local Windows IAM, and Security Log Review
 
 ### What this adds
@@ -359,26 +353,3 @@ route delete 0.0.0.0 mask 0.0.0.0 192.168.1.254
 
 is what actually cleared it. The persistent store is reachable from PowerShell too — [`Remove-NetRoute`](https://learn.microsoft.com/en-us/powershell/module/nettcpip/remove-netroute) accepts a `-PolicyStore` parameter — so the failure here was querying the wrong store by default, not a missing capability. Confirmed fully offline afterward: `Test-NetConnection 8.8.8.8` returning `PingSucceeded: False`, no route, no source address, while SSH on the local subnet remained fully reachable.
 
-### Key finding
-
-Three separate, genuine pieces of evidence — an enrolled RMM endpoint with a completed deployment, a locally-provisioned account visible through both PowerShell and the GUI, and a real Event ID 4625/4726 pair — demonstrate real endpoint administration and security log review on this domain-joined machine, the same evidentiary standard applied throughout this portfolio. The disconnection troubleshooting is its own legitimate finding on top of that: real endpoint network configuration, including a persistent-route mechanism that doesn't show up in the tooling most people would check first, is exactly the kind of thing that separates someone who's actually configured Windows networking from someone who's only read about it.
-
----
-
-## Addendum: A Deliberate Governance Decision — Scoping Windows Out of the SIEM
-
-### What this adds
-
-Not a new technical build — a documented judgment call, included because a real security program requires exactly this kind of decision as often as it requires new tooling: recognizing when the more complete-looking option is the wrong one, and being able to explain why in writing.
-
-### The decision
-
-Extending the Wazuh SIEM's monitoring to this project's domain-joined Windows client — centralizing its Security Event Log the same way Ubuntu-target's authentication log already is — was considered directly, as a natural next step once both machines were part of the same domain. It doesn't happen, and won't, without a deliberate infrastructure change first: the Wazuh manager runs on Ubuntu-target, which sits on the isolated network segment used for attack simulation; the Windows client sits on the real home network. Connecting the two would mean opening a route between an intentionally hostile, attacker-controlled segment and every other device on the actual production network. That trade was rejected outright — a real gap in log centralization was accepted rather than exchanged for a materially worse one.
-
-### Why this counts as governance, not just infrastructure
-
-Everywhere else in this portfolio, the work is technical: a rule is written, a policy is configured, a system is provisioned. This is different — no tool was built, no rule was written. A risk was identified, weighed against the benefit it would have unlocked, and the lab's own segmentation boundary was chosen over a feature. That's a small-scale but genuine version of what governance actually is: not every capability gap is worth closing at any cost, and stating that tradeoff plainly, in writing, is itself the deliverable — not a placeholder for one.
-
-### What this doesn't claim
-
-This isn't a claim to have built an organizational risk-governance program — a single-operator home lab doesn't have one, and pretending otherwise would undercut the honesty this whole portfolio is built on. It's one real decision, documented plainly, because it's the one artifact this lab's actual scale produced.
