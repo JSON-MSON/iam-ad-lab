@@ -1,0 +1,33 @@
+# The Samba DC's journal for August 5, 2026 (UTC): the IPv6 bind failure that stopped the domain controller service,
+# the backup attempts, the two restore attempts, the database failure, and the file-level backup and restore that replaced them.
+# Selected lines, in order. Read on the Samba DC, October 2, 2026:
+#   journalctl --since "2026-08-05 19:00" --until "2026-08-05 21:30" -o short-iso-precise --no-pager | grep -i -E "samba|cldap|error code|kdc|ldap" | grep -v -i setpassword
+# Each distinct global IPv6 address is replaced with its own address from the documentation range 2001:db8::/32. "Samba failed to prime database, error code 22" appears 5 times between 20:31 and 20:44; the first and last are shown.
+
+2026-08-05T19:41:14.380610+00:00 samba-dc samba[1833]:   Failed to bind to ipv6:2001:db8::5 - NT_STATUS_ADDRESS_NOT_ASSOCIATED
+2026-08-05T19:41:14.380624+00:00 samba-dc samba[1833]:   task_server_terminate: task_server_terminate: [cldapd failed to setup interfaces]
+2026-08-05T19:41:14.381530+00:00 samba-dc samba[1837]:   kdc_add_socket: Failed to bind to 2001:db8::4 UDP - NT_STATUS_ADDRESS_NOT_ASSOCIATED
+2026-08-05T19:41:24.405107+00:00 samba-dc systemd[1]: samba-ad-dc.service: Failed with result 'exit-code'.
+2026-08-05T19:46:52.524630+00:00 samba-dc sudo[2217]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool domain backup online --targetdir=/home/dcadmin/samba-backup --server=localhost -U administrator
+2026-08-05T19:52:45.046665+00:00 samba-dc sudo[2286]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool domain backup online --targetdir=/home/dcadmin/samba-backup --server=localhost -U administrator
+2026-08-05T19:56:46.799990+00:00 samba-dc sudo[2308]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool domain backup online --targetdir=/home/dcadmin/samba-backup --server=198.51.100.131 -U administrator
+2026-08-05T20:08:30.529240+00:00 samba-dc sudo[2430]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/sbin/sysctl -w net.ipv6.conf.all.disable_ipv6=1
+2026-08-05T20:08:30.724801+00:00 samba-dc systemd[1]: Started samba-ad-dc.service - Samba AD Daemon.
+2026-08-05T20:10:45.131873+00:00 samba-dc sudo[2661]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/sbin/netplan apply
+2026-08-05T20:13:07.821786+00:00 samba-dc sudo[3003]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool domain backup online --targetdir=/home/dcadmin/samba-backup --server=198.51.100.131 -U administrator
+2026-08-05T20:14:59.033480+00:00 samba-dc sudo[3027]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool user list
+2026-08-05T20:15:59.444492+00:00 samba-dc sudo[3062]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/mv /var/lib/samba/private /var/lib/samba/private.simulated-failure
+2026-08-05T20:21:40.761767+00:00 samba-dc sudo[3158]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool domain backup restore --backup-file=/home/dcadmin/samba-backup/samba-backup-example.test-2026-08-05T20-13-24.119819.tar.bz2 --targetdir=/var/lib/samba/private --newservername=samba-dc
+2026-08-05T20:26:59.539749+00:00 samba-dc sudo[3209]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool domain backup restore --backup-file=/home/dcadmin/samba-backup/samba-backup-example.test-2026-08-05T20-13-24.119819.tar.bz2 --targetdir=/var/lib/samba/private --newservername=samba-dc-restored
+2026-08-05T20:31:45.991169+00:00 samba-dc samba[3264]:   exit_daemon: daemon failed to start: Samba failed to prime database, error code 22
+2026-08-05T20:43:05.381406+00:00 samba-dc samba[3442]:   exit_daemon: daemon failed to start: Samba failed to prime database, error code 22
+2026-08-05T20:45:40.801490+00:00 samba-dc sudo[3463]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/mv /var/lib/samba/private /var/lib/samba/private.failed-restore-attempt
+2026-08-05T20:47:32.902427+00:00 samba-dc sudo[3617]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/tar -czvf /home/dcadmin/samba-private-backup.tar.gz -C /var/lib/samba private
+2026-08-05T20:49:24.536595+00:00 samba-dc sudo[3749]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/mv /var/lib/samba/private /var/lib/samba/private.simulated-failure-2
+2026-08-05T20:51:05.903729+00:00 samba-dc sudo[3805]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/tar -xzvf /home/dcadmin/samba-private-backup.tar.gz -C /var/lib/samba
+2026-08-05T20:53:02.899221+00:00 samba-dc systemd[1]: Started samba-ad-dc.service - Samba AD Daemon.
+2026-08-05T20:54:09.409012+00:00 samba-dc sudo[3940]: dcadmin : TTY=/dev/pts/0 ; PWD=/home/dcadmin ; USER=root ; COMMAND=/usr/bin/samba-tool user list
+
+# Output of the second restore attempt (--newservername=samba-dc-restored, 20:26:59 above), as saved at the time; last two lines:
+Backup file successfully restored to /var/lib/samba/private
+Please check the smb.conf settings are correct before starting samba.

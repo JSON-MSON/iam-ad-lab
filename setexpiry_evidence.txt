@@ -1,0 +1,33 @@
+# jsmith's expiry: the setexpiry --days=0 bug and its fix.
+
+# 1. Terminal output as pasted at the time (August 4, 2026), on the Samba DC; two of the attributes it printed:
+$ sudo samba-tool user show jsmith
+…
+whenCreated: 20260723162614.0Z
+…
+accountExpires: 134292976050000000
+…
+# accountExpires 134292976050000000 = 2026-07-23 16:26:45.0000000 UTC (computed: 100-nanosecond intervals since January 1, 1601),
+# 31 seconds after whenCreated (2026-07-23 16:26:14 UTC).
+
+# 2. Terminal output as pasted at the time (August 4, 2026), on Ubuntu Server: a domain logon test as jsmith
+#    (the command as recorded with the output, password replaced):
+$ sudo wbinfo -a 'jsmith%<password>'
+challenge/response password authentication failed
+wbcAuthenticateUserEx(EXAMPLE\jsmith): error code was NT_STATUS_ACCOUNT_EXPIRED (0xc0000193, authoritative=1)
+error message was: The user account has expired.
+Could not authenticate user jsmith with challenge/response
+
+# 3. The two setexpiry commands in the Samba DC's shell history (read October 2, 2026; history numbers 50 and 141):
+    50	sudo samba-tool user setexpiry jsmith --days=0
+   141	sudo samba-tool user setexpiry jsmith --noexpiry
+
+# 4. The account read on the Samba DC, October 2, 2026:
+$ sudo samba-tool user show jsmith | grep -i -E "^dn|whenCreated|accountExpires|lockoutTime|badPasswordTime|badPwdCount|pwdLastSet"
+dn: CN=jsmith,OU=IT,DC=example,DC=test
+whenCreated: 20260723162614.0Z
+pwdLastSet: 134303403669238659
+accountExpires: 0
+badPasswordTime: 134309345686512240
+lockoutTime: 0
+badPwdCount: 0

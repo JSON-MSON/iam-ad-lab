@@ -1,0 +1,22 @@
+# Failed logons (event 4625) and account deletions (event 4726) in the Windows client's Security log, in UTC.
+# The client displayed local time at UTC-7, as do the Event Viewer screenshots: 08:42 UTC is 1:42 AM; 08:53 UTC is 1:53 AM.
+# Parsed read-only from the client's Security log (copied from the client October 1, 2026) with python-evtx.
+
+# 4625 on August 7 (UTC), grouped by minute, account, logon type, logon process, process and source address:
+UTC    account   type  logon process  process      source     count
+07:31  (none)    3     sshd           sshd.exe     -             10
+07:31  FakeUser  8     Advapi         sshd.exe     -              5
+07:31  NOUSER    8     Advapi         sshd.exe     -            136
+07:32  (none)    3     sshd           sshd.exe     -              6
+07:32  FakeUser  8     Advapi         sshd.exe     -              3
+07:32  NOUSER    8     Advapi         sshd.exe     -              8
+07:33  winadmin  8     Advapi         sshd.exe     -              1
+08:42  winadmin  2     User32         svchost.exe  127.0.0.1      1
+09:22  winadmin  8     Advapi         sshd.exe     -              1
+# Total on August 7 (UTC): 171. Logon type 2 (interactive, at the console) appears once: 2026-08-07T08:42:10.2593722Z.
+# 4625 events in the log up to and including that console logon: 195 (the count the screenshot's filter shows).
+
+# 4726 (a user account was deleted), through August 7 (UTC):
+2026-07-22T18:15:41.8309434Z  record 5395  defaultuser0 (S-1-5-21-2000000001-2000000002-2000000003-1000)  deleted by winadmin (S-1-5-21-2000000001-2000000002-2000000003-1001)
+2026-08-07T08:53:17.7279109Z  record 13239  helpdesktest (S-1-5-21-2000000001-2000000002-2000000003-1003)  deleted by winadmin (S-1-5-21-2000000001-2000000002-2000000003-1001)
+2026-08-07T08:53:17.7593887Z  record 13242  helpdesktest2 (S-1-5-21-2000000001-2000000002-2000000003-1004)  deleted by winadmin (S-1-5-21-2000000001-2000000002-2000000003-1001)

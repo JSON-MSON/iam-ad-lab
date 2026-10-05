@@ -1,0 +1,20 @@
+# Helpdesk-IT's Reset Password entry checked on the IT OU and on the three users first provisioned into it (jsmith, agarcia, mchen), on the Samba DC, October 2, 2026.
+# 00299570-246d-11d0-a768-00aa006e0529 is the Reset Password extended right; -1106 is Helpdesk-IT's relative ID (RID).
+# The entry is on the OU; none of the three users carries it.
+
+$ sudo samba-tool group show Helpdesk-IT | grep -i -E "^dn|objectSid|member"
+dn: CN=Helpdesk-IT,CN=Users,DC=example,DC=test
+objectSid: S-1-5-21-1000000001-1000000002-1000000003-1106
+member: CN=jsmith,OU=IT,DC=example,DC=test
+
+$ sudo samba-tool dsacl get --objectdn="OU=IT,DC=example,DC=test" | tr ')' '\n' | grep -i -E '00299570|-1106'
+O:DAG:DAD:AI(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;S-1-5-21-1000000001-1000000002-1000000003-1106
+
+$ sudo samba-tool dsacl get --objectdn="CN=jsmith,OU=IT,DC=example,DC=test" | tr ')' '\n' | grep -i -E '00299570|-1106' || echo 'no Reset Password / Helpdesk-IT entry on jsmith'
+no Reset Password / Helpdesk-IT entry on jsmith
+
+$ sudo samba-tool dsacl get --objectdn="CN=agarcia,OU=IT,DC=example,DC=test" | tr ')' '\n' | grep -i -E '00299570|-1106' || echo 'no Reset Password / Helpdesk-IT entry on agarcia'
+no Reset Password / Helpdesk-IT entry on agarcia
+
+$ sudo samba-tool dsacl get --objectdn="CN=mchen,OU=IT,DC=example,DC=test" | tr ')' '\n' | grep -i -E '00299570|-1106' || echo 'no Reset Password / Helpdesk-IT entry on mchen'
+no Reset Password / Helpdesk-IT entry on mchen

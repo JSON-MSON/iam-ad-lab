@@ -1,0 +1,59 @@
+# The recurring IPv6 KDC bind failure on the Samba DC, and the settings behind it. Read on the Samba DC, October 2, 2026.
+
+# 1. The live disable_ipv6 value against /etc/sysctl.conf, read October 2, 2026:
+$ sysctl net.ipv6.conf.all.disable_ipv6; grep -n disable_ipv6 /etc/sysctl.conf /etc/sysctl.d/* 2>/dev/null
+net.ipv6.conf.all.disable_ipv6 = 0
+/etc/sysctl.conf:1:net.ipv6.conf.all.disable_ipv6 = 1
+/etc/sysctl.conf:2:net.ipv6.conf.default.disable_ipv6 = 1
+/etc/sysctl.conf:3:net.ipv6.conf.all.disable_ipv6 = 1
+/etc/sysctl.conf:4:net.ipv6.conf.default.disable_ipv6 = 1
+
+# 2. Every KDC socket bind failure in the domain controller service's journal (each distinct global IPv6 address is replaced with its own address from the documentation range 2001:db8::/32):
+$ sudo journalctl -u samba-ad-dc --no-pager -o short-iso | grep -i "kdc_add_socket" | head -20
+2026-07-23T20:04:57+00:00 samba-dc samba[1831]: [2026/07/23 20:04:57.431704,  0] source4/kdc/kdc-server.c:607(kdc_add_socket)
+2026-07-23T20:04:57+00:00 samba-dc samba[1831]:   kdc_add_socket: Failed to bind to 2001:db8::1 UDP - NT_STATUS_ADDRESS_NOT_ASSOCIATED
+2026-07-28T20:09:45+00:00 samba-dc samba[1883]: [2026/07/28 20:09:45.535513,  0] source4/kdc/kdc-server.c:607(kdc_add_socket)
+2026-07-28T20:09:45+00:00 samba-dc samba[1883]:   kdc_add_socket: Failed to bind to 2001:db8::2 UDP - NT_STATUS_ADDRESS_NOT_ASSOCIATED
+2026-08-04T15:57:44+00:00 samba-dc samba[1886]: [2026/08/04 15:57:44.314040,  0] source4/kdc/kdc-server.c:607(kdc_add_socket)
+2026-08-04T15:57:44+00:00 samba-dc samba[1886]:   kdc_add_socket: Failed to bind to 2001:db8::3 UDP - NT_STATUS_ADDRESS_NOT_ASSOCIATED
+2026-08-05T19:41:14+00:00 samba-dc samba[1837]: [2026/08/05 19:41:14.381501,  0] source4/kdc/kdc-server.c:607(kdc_add_socket)
+2026-08-05T19:41:14+00:00 samba-dc samba[1837]:   kdc_add_socket: Failed to bind to 2001:db8::4 UDP - NT_STATUS_ADDRESS_NOT_ASSOCIATED
+
+# 3. The netplan file in use and the .orig copy kept beside it (both written at 20:10:44 UTC on August 5, a second before netplan apply):
+$ sudo ls -l --time-style=full-iso /etc/netplan/
+total 8
+-rw------- 1 root root 306 2026-08-05 20:10:44.831348592 +0000 00-installer-config.yaml
+-rw------- 1 root root 280 2026-08-05 20:10:44.820655702 +0000 00-installer-config.yaml.orig
+
+$ sudo cat /etc/netplan/00-installer-config.yaml
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    enp26s0:
+      accept-ra: false
+      dhcp4: true
+      dhcp6: false
+    enp2s0:
+      accept-ra: false
+      dhcp4: true
+      dhcp6: false
+      match:
+        macaddress: 00:00:5e:00:53:01
+      set-name: enp2s0
+  version: 2
+
+$ sudo cat /etc/netplan/00-installer-config.yaml.orig
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    enp26s0:
+      accept-ra: true
+      dhcp4: true
+      dhcp6: true
+    enp2s0:
+      dhcp4: true
+      dhcp6: true
+      match:
+        macaddress: 00:00:5e:00:53:01
+      set-name: enp2s0
+  version: 2

@@ -1,0 +1,16 @@
+# The Windows client's own log records of the Action1 agent install and the 7-Zip deployment, August 7, 2026 (UTC).
+# Parsed read-only from the client's System and Application logs (copied from the client October 1, 2026) with python-evtx;
+# times are the events' own 100-nanosecond timestamps. Versions are shown as <version>.
+
+# System log, event 7045 (a service was installed), record 1667:
+2026-08-07T07:54:51.9577096Z  Service Control Manager
+  ServiceName = Action1 Agent
+  ImagePath   = C:\Windows\Action1\action1_agent.exe service
+  ServiceType = user mode service
+  StartType   = auto start
+  AccountName = LocalSystem
+
+# Application log, every MsiInstaller event 11707 (installation completed) or 11724 (removal completed) on August 7:
+2026-08-07T07:54:54.8014785Z  record 979  event 11707  Product: Action1 Agent -- Installation completed successfully.
+2026-08-07T08:20:12.5455705Z  record 1011  event 11707  Product: 7-Zip <version> (x64 edition) -- Installation completed successfully.
+2026-08-07T08:25:14.9606450Z  record 1021  event 11724  Product: 7-Zip <version> (x64 edition) -- Removal completed successfully.
