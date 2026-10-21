@@ -115,7 +115,7 @@ sudo samba-tool dsacl get --objectdn="OU=IT,DC=example,DC=test" | grep -o "(OA;[
 
 ![Delegation entry read back from the IT OU](screenshots/delegation-proof.png)
 
-Checked again on October 2, 2026 against the users themselves: `samba-tool dsacl get` on `jsmith`, `agarcia`, and `mchen` shows no Reset Password entry for Helpdesk-IT ([`delegation_user_check_2026-10-02.txt`](delegation_user_check_2026-10-02.txt)). Fixing it means writing the entry with inheritance to user objects, then confirming the right on a user, not on the OU. The fix has not been made yet; it will be recorded in a dated addendum to this README.
+Checked again on October 2, 2026 against the users themselves: `samba-tool dsacl get` on `jsmith`, `agarcia`, and `mchen` shows no Reset Password entry for Helpdesk-IT ([`delegation_user_check_2026-10-02.txt`](delegation_user_check_2026-10-02.txt)). Fixing it would mean writing the entry with inheritance to user objects, then confirming the right on a user, not on the OU. The fix was not made: the entry is kept as it stands, and the access control policy in `governance-risk-lab` records that Helpdesk-IT holds no right over any user account.
 
 ## Files in this repo
 
@@ -379,4 +379,4 @@ route delete 0.0.0.0 mask 0.0.0.0 192.0.2.254
 
 ([`Remove-NetRoute`](https://learn.microsoft.com/en-us/powershell/module/nettcpip/remove-netroute) with its `-PolicyStore` parameter reaches the same store from PowerShell.) Afterward `route print` listed no persistent routes, and `Test-NetConnection 8.8.8.8` returned `PingSucceeded: False`, with no route and no source address.
 
-The fix did not last. It was checked only within that session, and by September 17 the machine had a default gateway route again, by a mechanism that was not identified. On September 29 the no-internet design was abandoned, leaving the client's internet access in place until its retirement, which is tracked in `governance-risk-lab`.
+The fix did not last. It was checked only within that session, and by September 17 the machine had a default gateway route again, by a mechanism that was not identified. On September 29 the no-internet design was abandoned, leaving the client's internet access in place until its retirement, recorded in `governance-risk-lab`.
